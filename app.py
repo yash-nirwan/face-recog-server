@@ -1,50 +1,64 @@
 from flask import Flask, request, jsonify
 import face_recognition
 import os
+import io
 
 app = Flask(__name__)
 
-# ── Optional Home Page ─────────────────────────────────────
+# ── Home Page ────────────────────────────────────────────────
 @app.route('/')
 def home():
     return "Face Recognition Server is running. Use POST /upload to send images."
 
-# ── Load known faces at startup ────────────────────────────
+# ── Load known faces at startup ──────────────────────────────
 known_encodings = []
 known_names = []
 
-if not os.path.exists('known_faces'):
-    os.makedirs('known_faces')
-
+os.makedirs('known_faces', exist_ok=True)
 for fname in os.listdir('known_faces'):
     if fname.lower().endswith(('.jpg', '.png')):
         img = face_recognition.load_image_file(f'known_faces/{fname}')
-        enc = face_recognition.face_encodings(img)
-        if enc:
-            known_encodings.append(enc[0])
-            known_names.append(os.path.splitext(fname)[0])  # Filename without extension
+        encs = face_recognition.face_encodings(img)
+        if encs:
+            known_encodings.append(encs[0])
+            known_names.append(os.path.splitext(fname)[0])
 
-# ── Upload endpoint for ESP32-CAM ──────────────────────────
+# ── Upload endpoint for ESP32-CAM ────────────────────────────
 @app.route('/upload', methods=['POST'])
 def upload_image():
+    print("=== /upload called ===")
+    print("Form fields:", request.files.keys())
+
     if 'image' not in request.files:
+        print("❌ No image field!")
         return jsonify({'result': 'No image part'}), 400
 
     file = request.files['image']
-    img = face_recognition.load_image_file(file)
-    encs = face_recognition.face_encodings(img)
+    data = file.read()
+    print(f"Received '{file.filename}' ({len(data)} bytes)")
+    # Save for inspection
+    with open('last_upload.jpg', 'wb') as f:
+        f.write(data)
+        print("✅ Saved last_upload.jpg")
 
+    # Face recognition
+    img = face_recognition.load_image_file(io.BytesIO(data))
+    encs = face_recognition.face_encodings(img)
     if not encs:
+        print("❌ No face detected")
         return jsonify({'result': 'No face detected'})
 
     matches = face_recognition.compare_faces(known_encodings, encs[0])
     if True in matches:
-        idx = matches.index(True)
-        return jsonify({'result': f'Face recognized: {known_names[idx]}'})
+        name = known_names[matches.index(True)]
+        print(f"✅ Face recognized: {name}")
+        return jsonify({'result': f'Face recognized: {name}'})
     else:
+        print("❌ Intruder detected")
         return jsonify({'result': 'Intruder detected'})
 
-# ── Run on Railway's provided PORT ─────────────────────────
+# ── Run Server ───────────────────────────────────────────────
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
+    print(f"Starting server on port {port}")
     app.run(host='0.0.0.0', port=port)
