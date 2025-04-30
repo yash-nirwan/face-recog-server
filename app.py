@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import face_recognition
 import os
 import io
+import base64
 
 app = Flask(__name__)
 
@@ -9,6 +10,17 @@ app = Flask(__name__)
 @app.route('/')
 def home():
     return "Face Recognition Server is running. Use POST /upload to send images."
+
+# ── Debug route to return last uploaded image as Base64 ──────
+@app.route('/debug/last_image', methods=['GET'])
+def last_image():
+    try:
+        with open('last_upload.jpg', 'rb') as f:
+            data = f.read()
+        b64 = base64.b64encode(data).decode('utf8')
+        return jsonify({'image_b64': b64})
+    except FileNotFoundError:
+        return jsonify({'error': 'No upload yet'}), 404
 
 # ── Load known faces at startup ──────────────────────────────
 known_encodings = []
