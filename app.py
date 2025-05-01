@@ -4,7 +4,16 @@ import os
 import io
 import base64
 
+# MQTT
+import paho.mqtt.publish as publish
+
+# Flask app
 app = Flask(__name__)
+
+# MQTT broker settings
+default_broker = 'test.mosquitto.org'
+topic_alert = 'intruder/alert'
+topic_image = 'yashn1234/intruder/image'
 
 # ── Home Page ────────────────────────────────────────────────
 @app.route('/')
@@ -39,8 +48,7 @@ for fname in os.listdir('known_faces'):
 @app.route('/upload', methods=['POST'])
 def upload_image():
     print("=== /upload called ===")
-    print("Form fields:", request.files.keys())
-
+    # Expecting multipart form upload
     if 'image' not in request.files:
         print("❌ No image field!")
         return jsonify({'result': 'No image part'}), 400
@@ -53,24 +61,43 @@ def upload_image():
         f.write(data)
         print("✅ Saved last_upload.jpg")
 
+    # Encode to base64 for MQTT
+    b64 = base64.b64encode(data).decode('utf8')
+    # Publish image payload
+    try:
+        publish.single(topic_image, payload=b64, hostname=default_broker)
+        print(f"📡 Published image to MQTT topic '{topic_image}'")
+    except Exception as e:
+        print(f"❌ MQTT image publish failed: {e}")
+
     # Face recognition
     img = face_recognition.load_image_file(io.BytesIO(data))
     encs = face_recognition.face_encodings(img)
     if not encs:
-        print("❌ No face detected")
-        return jsonify({'result': 'No face detected'})
-
-    matches = face_recognition.compare_faces(known_encodings, encs[0])
-    if True in matches:
-        name = known_names[matches.index(True)]
-        print(f"✅ Face recognized: {name}")
-        return jsonify({'result': f'Face recognized: {name}'})
+        result = 'No face detected'
+        print(f"❌ {result}")
     else:
-        print("❌ Intruder detected")
-        return jsonify({'result': 'Intruder detected'})
+        matches = face_recognition.compare_faces(known_encodings, encs[0])
+        if True in matches:
+            name = known_names[matches.index(True)]
+            result = f'Face recognized: {name}'
+            print(f"✅ {result}")
+        else:
+            result = 'Intruder detected'
+            print(f"❌ {result}")
+
+    # Publish alert result
+    try:
+        publish.single(topic_alert, payload=result, hostname=default_broker)
+        print(f"📡 Published alert to MQTT topic '{topic_alert}': {result}")
+    except Exception as e:
+        print(f"❌ MQTT alert publish failed: {e}")
+
+    return jsonify({'result': result})
 
 # ── Run Server ───────────────────────────────────────────────
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print(f"Starting server on port {port}")
     app.run(host='0.0.0.0', port=port)
+
