@@ -7,13 +7,34 @@ import base64
 # MQTT
 import paho.mqtt.publish as publish
 
+# —————————— Telegram imports & config ——————————
+import requests
+
+BOT_TOKEN    = "7736035712:AAHFEUAc3mJBLST5G3ffML6VSsVoIkRtNRw"
+CHAT_ID      = "6217036575"
+TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
+def send_telegram_message(text: str):
+    url = f"{TELEGRAM_API}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": text
+    }
+    try:
+        r = requests.post(url, data=payload, timeout=10)
+        print("📲 Telegram message:", r.status_code, r.text)
+    except Exception as e:
+        print("❌ Telegram sendMessage failed:", e)
+# ——————————————————————————————————————————————
+
+
 # Flask app
 app = Flask(__name__)
 
 # MQTT broker settings
 default_broker = 'test.mosquitto.org'
-topic_alert = 'intruder/alert'
-topic_image = 'yashn1234/intruder/image'
+topic_alert   = 'intruder/alert'
+topic_image   = 'yashn1234/intruder/image'
 
 # ── Home Page ────────────────────────────────────────────────
 @app.route('/')
@@ -33,12 +54,12 @@ def last_image():
 
 # ── Load known faces at startup ──────────────────────────────
 known_encodings = []
-known_names = []
+known_names     = []
 
 os.makedirs('known_faces', exist_ok=True)
 for fname in os.listdir('known_faces'):
     if fname.lower().endswith(('.jpg', '.png')):
-        img = face_recognition.load_image_file(f'known_faces/{fname}')
+        img  = face_recognition.load_image_file(f'known_faces/{fname}')
         encs = face_recognition.face_encodings(img)
         if encs:
             known_encodings.append(encs[0])
@@ -71,7 +92,7 @@ def upload_image():
         print(f"❌ MQTT image publish failed: {e}")
 
     # Face recognition
-    img = face_recognition.load_image_file(io.BytesIO(data))
+    img  = face_recognition.load_image_file(io.BytesIO(data))
     encs = face_recognition.face_encodings(img)
     if not encs:
         result = 'No face detected'
@@ -79,7 +100,7 @@ def upload_image():
     else:
         matches = face_recognition.compare_faces(known_encodings, encs[0])
         if True in matches:
-            name = known_names[matches.index(True)]
+            name   = known_names[matches.index(True)]
             result = f'Face recognized: {name}'
             print(f"✅ {result}")
         else:
@@ -93,6 +114,11 @@ def upload_image():
     except Exception as e:
         print(f"❌ MQTT alert publish failed: {e}")
 
+    # ── Telegram alert ────────────────────────────────────────
+    if result.lower().startswith("intruder"):
+        send_telegram_message("⚠️ Careful, intruder detected")
+    # ─────────────────────────────────────────────────────────
+
     return jsonify({'result': result})
 
 # ── Run Server ───────────────────────────────────────────────
@@ -100,4 +126,3 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print(f"Starting server on port {port}")
     app.run(host='0.0.0.0', port=port)
-
