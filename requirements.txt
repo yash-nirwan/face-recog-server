@@ -1,5 +1,6 @@
 Flask
 face_recognition
 paho-mqtt
-gunicorn
 requests
+numpy
+Pillow

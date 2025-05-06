@@ -3,6 +3,7 @@ import face_recognition
 import os
 import io
 import base64
+import pathlib  # ✅ Added for folder support
 
 # MQTT
 import paho.mqtt.publish as publish
@@ -26,7 +27,6 @@ def send_telegram_message(text: str):
     except Exception as e:
         print("❌ Telegram sendMessage failed:", e)
 # ——————————————————————————————————————————————
-
 
 # Flask app
 app = Flask(__name__)
@@ -52,18 +52,28 @@ def last_image():
     except FileNotFoundError:
         return jsonify({'error': 'No upload yet'}), 404
 
-# ── Load known faces at startup ──────────────────────────────
+# ── Load known faces at startup (supports folders per person) ──
 known_encodings = []
 known_names     = []
 
-os.makedirs('known_faces', exist_ok=True)
-for fname in os.listdir('known_faces'):
-    if fname.lower().endswith(('.jpg', '.png')):
-        img  = face_recognition.load_image_file(f'known_faces/{fname}')
-        encs = face_recognition.face_encodings(img)
-        if encs:
-            known_encodings.append(encs[0])
-            known_names.append(os.path.splitext(fname)[0])
+base_path = pathlib.Path("known_faces")
+base_path.mkdir(exist_ok=True)
+
+for person_dir in base_path.iterdir():
+    if person_dir.is_dir():
+        person_name = person_dir.name
+        for img_path in person_dir.glob("*.[jp][pn]g"):
+            try:
+                img = face_recognition.load_image_file(img_path)
+                encs = face_recognition.face_encodings(img)
+                if encs:
+                    known_encodings.append(encs[0])
+                    known_names.append(person_name)
+                    print(f"✅ Loaded {img_path.name} for '{person_name}'")
+                else:
+                    print(f"⚠️ No face found in {img_path}")
+            except Exception as e:
+                print(f"❌ Error loading {img_path}: {e}")
 
 # ── Upload endpoint for ESP32-CAM ────────────────────────────
 @app.route('/upload', methods=['POST'])
@@ -77,6 +87,7 @@ def upload_image():
     file = request.files['image']
     data = file.read()
     print(f"Received '{file.filename}' ({len(data)} bytes)")
+
     # Save for inspection
     with open('last_upload.jpg', 'wb') as f:
         f.write(data)
@@ -84,7 +95,6 @@ def upload_image():
 
     # Encode to base64 for MQTT
     b64 = base64.b64encode(data).decode('utf8')
-    # Publish image payload
     try:
         publish.single(topic_image, payload=b64, hostname=default_broker)
         print(f"📡 Published image to MQTT topic '{topic_image}'")
@@ -98,14 +108,21 @@ def upload_image():
         result = 'No face detected'
         print(f"❌ {result}")
     else:
-        matches = face_recognition.compare_faces(known_encodings, encs[0])
-        if True in matches:
-            name   = known_names[matches.index(True)]
-            result = f'Face recognized: {name}'
-            print(f"✅ {result}")
+        unknown_enc = encs[0]
+        face_distances = face_recognition.face_distance(known_encodings, unknown_enc)
+        if len(face_distances) > 0:
+            best_match_index = face_distances.argmin()
+            match_threshold = 0.5  # Adjustable for stricter or looser match
+            if face_distances[best_match_index] < match_threshold:
+                name = known_names[best_match_index]
+                result = f'Face recognized: {name}'
+                print(f"✅ {result}")
+            else:
+                result = 'Intruder detected'
+                print(f"❌ {result}")
         else:
-            result = 'Intruder detected'
-            print(f"❌ {result}")
+            result = 'No known faces loaded'
+            print(f"⚠️ {result}")
 
     # Publish alert result
     try:
@@ -114,10 +131,9 @@ def upload_image():
     except Exception as e:
         print(f"❌ MQTT alert publish failed: {e}")
 
-    # ── Telegram alert ────────────────────────────────────────
+    # Telegram alert
     if result.lower().startswith("intruder"):
         send_telegram_message("⚠️ Careful, intruder detected")
-    # ─────────────────────────────────────────────────────────
 
     return jsonify({'result': result})
 
