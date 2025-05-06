@@ -112,7 +112,7 @@ def upload_image():
         face_distances = face_recognition.face_distance(known_encodings, unknown_enc)
         if len(face_distances) > 0:
             best_match_index = face_distances.argmin()
-            match_threshold = 0.5  # Adjustable for stricter or looser match
+            match_threshold = 0.4  # Adjustable for stricter or looser match
             if face_distances[best_match_index] < match_threshold:
                 name = known_names[best_match_index]
                 result = f'Face recognized: {name}'
